@@ -1,6 +1,6 @@
 use bimap::BiMap;
-use std::{cell::RefCell, cmp::Reverse, collections::HashMap, rc::Rc};
 use bitvec::prelude::*;
+use std::{cell::RefCell, cmp::Reverse, collections::HashMap, rc::Rc};
 
 #[derive(Debug, Clone)]
 enum TreeNode {
@@ -18,7 +18,7 @@ type TreeNodeRef = Rc<RefCell<TreeNode>>;
 type HuffmanTable = BiMap<char, BitVec>;
 
 impl TreeNode {
-    fn count(&self) -> usize {
+    const fn count(&self) -> usize {
         match self {
             Self::InternalNode { count, .. } | Self::LeafNode { count, .. } => *count,
         }
@@ -48,8 +48,8 @@ fn count_chars(string: &str) -> HashMap<char, usize> {
 
 fn initialize_nodes(counts: HashMap<char, usize>) -> Vec<TreeNodeRef> {
     let mut vec = vec![];
-    for (char, count) in counts.iter() {
-        vec.push((*char, *count));
+    for (char, count) in counts {
+        vec.push((char, count));
     }
     vec.sort_by_key(|(char, count)| (Reverse(*count), *char as u64));
     vec.iter()
@@ -73,8 +73,7 @@ fn calculate_encodings(tree: Rc<RefCell<TreeNode>>) -> HuffmanTable {
     let mut encodings = BiMap::new();
     let mut stack = vec![(tree, BitVec::new())];
 
-    while !stack.is_empty() {
-        let (node, index): (Rc<RefCell<TreeNode>>, BitVec) = stack.pop().unwrap();
+    while let Some((node, index)) = stack.pop() {
         match *node.borrow() {
             TreeNode::LeafNode { char, .. } => {
                 encodings.insert(char, index.clone());
@@ -112,28 +111,30 @@ fn calculate_huffman_table(str: &str) -> HuffmanTable {
 
 /// DISPLAYING VISUALLY
 
-fn print_encodings(encodings: &HuffmanTable) -> () {
-    print!("{{\n");
-    for (char, index) in encodings.iter() {
-        print!("'{char}' > {index}\n")
+fn print_encodings(encodings: &HuffmanTable) {
+    println!("{{");
+    for (char, index) in encodings {
+        println!("'{char}' > {index:b}");
     }
-    print!("}}\n");
+    println!("}}");
 }
 
 /// ENCODING/DECODING DATA
 
-fn huffman_encode(str: &str, table: HuffmanTable) -> BitVec {
+fn huffman_encode(str: &str, table: &HuffmanTable) -> BitVec {
     let mut vec = BitVec::new();
     for char in str.chars() {
-        let index = table.get_by_left(&char).expect("char should be in the table");
+        let index = table
+            .get_by_left(&char)
+            .expect("char should be in the table");
         vec.append(&mut index.clone());
     }
     vec
 }
 
-fn huffman_decode(mut bits: BitVec, tree: Rc<RefCell<TreeNode>>) -> String {
+fn huffman_decode(mut bits: BitVec, tree: &Rc<RefCell<TreeNode>>) -> String {
     let mut result = String::new();
-    let mut node = Rc::clone(&tree);
+    let mut node = Rc::clone(tree);
     bits.reverse(); // reversed because popping is faster
     while !bits.is_empty() {
         let bit = bits.pop().unwrap();
@@ -150,19 +151,16 @@ fn huffman_decode(mut bits: BitVec, tree: Rc<RefCell<TreeNode>>) -> String {
         };
 
         let x = node.borrow();
-        match *x {
-            TreeNode::LeafNode { char, .. } => {
-                result.push(char);
-                drop(x);
-                node = Rc::clone(&tree);
-            },
-            _ => (),
+        if let TreeNode::LeafNode { char, .. } = *x {
+            result.push(char);
+            drop(x);
+            node = Rc::clone(tree);
         };
-    };
+    }
     result
 }
 
-// FIXME: strings with only one unique character break, as they are encoded as []
+// FIXME: strings with only one unique character break, as the one char is encoded as []
 
 fn main() {
     //let input = "qwertyuiopasdfghjklzxcvbnm1234567890-=[]#';/.,\\";
@@ -178,15 +176,21 @@ Morbi vulputate hendrerit lobortis. Curabitur suscipit mauris ex. Ut mollis augu
     let tree = calculate_huffman_tree(input);
     let table = calculate_encodings(tree.clone());
     print_encodings(&table);
-    let x = huffman_encode(input, table.clone());
-    println!("{x}");
-    let y = huffman_decode(x.clone(), tree);
+    let x = huffman_encode(input, &table);
+    println!("{x:b}");
+    let y = huffman_decode(x.clone(), &tree);
     assert!(y == input);
 
     let char_size = std::mem::size_of::<char>() * 8;
     let original_size = input.len() * char_size;
     // assumes optimal packing of huffman table
-    let huffman_size = 
-        x.len() + table.into_iter().map(|(_, bits)| char_size + bits.len()).sum::<usize>();
-    println!("before: {original_size}, after: {huffman_size}, ratio: {:.2}x original size", (huffman_size as f64) / (original_size as f64))
+    let huffman_size = x.len()
+        + table
+            .into_iter()
+            .map(|(_, bits)| char_size + bits.len())
+            .sum::<usize>();
+    println!(
+        "before: {original_size}, after: {huffman_size}, ratio: {:.2}x original size",
+        (huffman_size as f64) / (original_size as f64)
+    );
 }
