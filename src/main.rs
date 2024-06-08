@@ -15,8 +15,7 @@ enum TreeNode {
     },
 }
 type TreeNodeRef = Rc<RefCell<TreeNode>>;
-type HuffmanTable = BiMap<char, usize>;
-type BitvecHuffmanTable = BiMap<char, BitVec>;
+type HuffmanTable = BiMap<char, BitVec>;
 
 impl TreeNode {
     fn count(&self) -> usize {
@@ -35,14 +34,6 @@ impl TreeNode {
         count += right.borrow().count();
         Rc::new(RefCell::new(Self::InternalNode { left, right, count }))
     }
-}
-
-fn huffman_usize_to_string(num: usize) -> String {
-    // format number in binary
-    let mut x = format!("{:b}", num);
-    // remove trailing 1
-    x.remove(0);
-    x
 }
 
 /// CALCULATING TABLE
@@ -78,7 +69,7 @@ fn construct_tree(mut nodes: Vec<TreeNodeRef>) -> TreeNodeRef {
     //    .into_inner()
 }
 
-fn bitvec_calculate_encodings(tree: Rc<RefCell<TreeNode>>) -> BitvecHuffmanTable {
+fn calculate_encodings(tree: Rc<RefCell<TreeNode>>) -> HuffmanTable {
     let mut encodings = BiMap::new();
     let mut stack = vec![(tree, BitVec::new())];
 
@@ -106,29 +97,10 @@ fn bitvec_calculate_encodings(tree: Rc<RefCell<TreeNode>>) -> BitvecHuffmanTable
     encodings
 }
 
-fn calculate_encodings(tree: Rc<RefCell<TreeNode>>) -> HuffmanTable {
-    let mut encodings = BiMap::new();
-    // note the trailing one is used for marking the length
-    let mut stack = vec![(tree, 1)];
-
-    while !stack.is_empty() {
-        let (node, index): (Rc<RefCell<TreeNode>>, usize) = stack.pop().unwrap();
-        match *node.borrow() {
-            TreeNode::LeafNode { char, .. } => {
-                encodings.insert(char, index);
-            }
-            TreeNode::InternalNode {
-                ref left,
-                ref right,
-                ..
-            } => {
-                stack.push((Rc::clone(right), (index << 1) + 1));
-                stack.push((Rc::clone(left), (index << 1) + 0));
-            }
-        };
-    }
-
-    encodings
+fn calculate_huffman_tree(str: &str) -> Rc<RefCell<TreeNode>> {
+    let counts = count_chars(str);
+    let nodes = initialize_nodes(counts);
+    construct_tree(nodes)
 }
 
 fn calculate_huffman_table(str: &str) -> HuffmanTable {
@@ -138,56 +110,19 @@ fn calculate_huffman_table(str: &str) -> HuffmanTable {
     calculate_encodings(tree)
 }
 
-fn bitvec_calculate_huffman_table(str: &str) -> BitvecHuffmanTable {
-    let counts = count_chars(str);
-    let nodes = initialize_nodes(counts);
-    let tree = construct_tree(nodes);
-    bitvec_calculate_encodings(tree)
-}
-
 /// DISPLAYING VISUALLY
 
 fn print_encodings(encodings: &HuffmanTable) -> () {
-    print!("{{ ");
+    print!("{{\n");
     for (char, index) in encodings.iter() {
-        let x = huffman_usize_to_string(*index);
-        print!(" '{char}' > {x} ")
+        print!("'{char}' > {index}\n")
     }
-    print!(" }} \n");
+    print!("}}\n");
 }
 
-fn bitvec_print_encodings(encodings: &BitvecHuffmanTable) -> () {
-    print!("{{ ");
-    for (char, index) in encodings.iter() {
-        print!(" '{char}' > {index} ")
-    }
-    print!(" }} \n");
-}
+/// ENCODING/DECODING DATA
 
-/// ENCODING DATA USING TABLE
-
-fn bad_encode_usize(str: &str, table: &HuffmanTable) -> usize {
-    usize::from_str_radix(
-        &str.chars()
-            .map(|char| huffman_usize_to_string(*table.get_by_left(&char).unwrap()))
-            .collect::<String>(),
-        2,
-    )
-    .unwrap()
-}
-
-fn usize_huffman_encode(str: &str, table: HuffmanTable) -> usize {
-    let mut result = 0;
-    for char in str.chars() {
-        let index = table.get_by_left(&char).expect("char should be in the table");
-        result = result << (usize::BITS - index.leading_zeros() - 1);
-        // subtracting the leading one before adding to the result
-        result += index - 2_usize.pow(usize::BITS - index.leading_zeros() - 1);
-    };
-    result
-}
-
-fn bitvec_huffman_encode(str: &str, table: BitvecHuffmanTable) -> BitVec {
+fn huffman_encode(str: &str, table: HuffmanTable) -> BitVec {
     let mut vec = BitVec::new();
     for char in str.chars() {
         let index = table.get_by_left(&char).expect("char should be in the table");
@@ -196,16 +131,62 @@ fn bitvec_huffman_encode(str: &str, table: BitvecHuffmanTable) -> BitVec {
     vec
 }
 
-fn main() {
-    let input = "very long test phrase that would not otherwise fit!";
-    //let encodings = calculate_huffman_table(input);
-    //print_encodings(&encodings);
-    //let x = bad_encode(input, &encodings);
-    //let y = usize_huffman_encode(input, encodings);
-    //println!("{x:b} == {y:b}, {}", x == y);
+fn huffman_decode(mut bits: BitVec, tree: Rc<RefCell<TreeNode>>) -> String {
+    let mut result = String::new();
+    let mut node = Rc::clone(&tree);
+    bits.reverse(); // reversed because popping is faster
+    while !bits.is_empty() {
+        let bit = bits.pop().unwrap();
+        node = if bit {
+            match *node.borrow() {
+                TreeNode::InternalNode { ref right, .. } => Rc::clone(right),
+                TreeNode::LeafNode { .. } => unreachable!(),
+            }
+        } else {
+            match *node.borrow() {
+                TreeNode::InternalNode { ref left, .. } => Rc::clone(left),
+                TreeNode::LeafNode { .. } => unreachable!(),
+            }
+        };
 
-    let table = bitvec_calculate_huffman_table(input);
-    bitvec_print_encodings(&table);
-    let z = bitvec_huffman_encode(input, table);
-    println!("{z}");
+        let x = node.borrow();
+        match *x {
+            TreeNode::LeafNode { char, .. } => {
+                result.push(char);
+                drop(x);
+                node = Rc::clone(&tree);
+            },
+            _ => (),
+        };
+    };
+    result
+}
+
+// FIXME: strings with only one unique character break, as they are encoded as []
+
+fn main() {
+    //let input = "qwertyuiopasdfghjklzxcvbnm1234567890-=[]#';/.,\\";
+    //let input = "very long test phrase that would not otherwise fit!";
+    let input = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Proin orci lorem, lacinia sed finibus id, fermentum non nisi. Aenean ullamcorper, lacus eget porttitor finibus, diam nibh porttitor metus, sed dapibus nisi risus sed nunc. Nam congue dui dolor, vel fringilla felis euismod ut. Cras interdum diam non ornare accumsan. Fusce porta lacus magna, fringilla feugiat turpis lacinia at. Donec leo dui, vulputate vitae magna vitae, consequat commodo odio. Nulla fringilla nisi ligula, sit amet rhoncus magna venenatis non. Quisque libero velit, fermentum a dui at, porttitor tempus diam. Donec fermentum, ex quis cursus lacinia, lectus arcu condimentum dui, vitae pretium tellus massa eget massa. Praesent posuere pretium elementum. Morbi pretium posuere sapien pellentesque tincidunt. Morbi tempor massa nec metus fringilla pharetra. Aliquam pulvinar enim ac ante sagittis imperdiet. Morbi a tristique diam. Nam velit ipsum, pretium at tristique vitae, tincidunt et dolor. Vestibulum sodales ex lacus, vel aliquam risus feugiat facilisis.
+Nulla odio ante, accumsan non ultrices non, pulvinar ac enim. Donec maximus sollicitudin commodo. Duis accumsan, tortor a rhoncus consequat, odio ligula pretium metus, dignissim mollis felis nisi sit amet nulla. Phasellus id dignissim erat. Nullam sed lectus aliquet, commodo lacus ac, laoreet sem. Nulla finibus sem at quam lobortis pulvinar. Etiam id cursus lacus, molestie sagittis nibh. Aenean et enim non nulla vehicula rutrum. Etiam ipsum lacus, hendrerit ac dolor sit amet, sagittis aliquam dolor. Nam feugiat dolor urna, quis finibus ipsum cursus aliquam. In id purus ligula. Proin fermentum molestie est et dapibus. Praesent quis elit quis ex euismod molestie porttitor sit amet urna.
+Integer non faucibus urna, nec tempor justo. Etiam aliquam dui diam, quis malesuada nibh lobortis non. Aliquam eget aliquet turpis, placerat gravida diam. Sed placerat accumsan feugiat. Sed ut pellentesque lorem. Suspendisse sit amet ligula metus. Aenean non mollis sem. Nunc vehicula, mauris sed pellentesque pulvinar, enim nisi iaculis dui, a eleifend nulla risus vel metus. Praesent at dui viverra metus imperdiet venenatis sit amet id tellus. Cras lacinia vel neque id condimentum. Sed et dui tortor. Interdum et malesuada fames ac ante ipsum primis in faucibus. Curabitur nec hendrerit nunc. Nulla blandit purus odio, in faucibus enim feugiat ac. Morbi auctor eleifend tellus, ut ultrices lorem mollis ac.
+Phasellus lacus lacus, laoreet ac orci a, dictum porta velit. In hac habitasse platea dictumst. Quisque ultricies ante at porttitor sagittis. Nunc aliquam faucibus urna eget aliquam. Quisque non nibh velit. Pellentesque rutrum blandit sem, in efficitur magna varius at. Etiam sollicitudin pretium venenatis. Duis accumsan tellus ex, aliquam sollicitudin elit lacinia dapibus.
+Morbi vulputate hendrerit lobortis. Curabitur suscipit mauris ex. Ut mollis augue ut augue blandit, eu aliquet velit malesuada. Integer eu suscipit nunc, ornare facilisis lorem. Pellentesque vitae orci dapibus, pharetra elit id, sagittis elit. Vestibulum facilisis, odio sit amet commodo viverra, mauris orci porttitor est, vel rutrum ipsum dui sed tortor. Ut in quam cursus, pulvinar sapien non, fermentum diam. Nulla cursus sagittis sapien, eu tincidunt neque interdum sed. Nulla nisl velit, aliquam vitae ante ut, vehicula ornare nisl. Nullam laoreet eros in erat gravida, at maximus diam iaculis.
+";
+    println!("{input}");
+
+    let tree = calculate_huffman_tree(input);
+    let table = calculate_encodings(tree.clone());
+    print_encodings(&table);
+    let x = huffman_encode(input, table.clone());
+    println!("{x}");
+    let y = huffman_decode(x.clone(), tree);
+    assert!(y == input);
+
+    let char_size = std::mem::size_of::<char>() * 8;
+    let original_size = input.len() * char_size;
+    // assumes optimal packing of huffman table
+    let huffman_size = 
+        x.len() + table.into_iter().map(|(_, bits)| char_size + bits.len()).sum::<usize>();
+    println!("before: {original_size}, after: {huffman_size}, ratio: {:.2}x original size", (huffman_size as f64) / (original_size as f64))
 }
